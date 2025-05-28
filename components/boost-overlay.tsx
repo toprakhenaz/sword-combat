@@ -89,6 +89,9 @@ export default function BoostOverlay({
       border: "1px solid rgba(34, 197, 94, 0.4)",
       shadow: "0 4px 12px rgba(34, 197, 94, 0.2)",
       background: "",
+      iconFrom: "rgb(197,94,0.4)",
+      shadow: "0 4px 12px rgba(34, 197, 94, 0.2)",
+      background: "",
       iconFrom: "rgb(34, 197, 94)",
       iconTo: "rgb(21, 128, 61)",
       innerBg: "rgb(134, 239, 172)", // Yeşil iç ikon arka planı
@@ -247,7 +250,37 @@ export default function BoostOverlay({
 
   // Boost seviyesi progress bar'ı
   const getBoostProgress = (level: number) => {
-    return (level / MAX_BOOST_LEVEL) * 100
+    return ((level + 1) / (MAX_BOOST_LEVEL + 1)) * 100
+  }
+
+  // Boost seviyesine göre gösterilecek değerler
+  const getBoostStats = (boostType: string, level: number) => {
+    switch (boostType) {
+      case "multiTouch":
+        // Kullanıcının mevcut earn_per_tap değerini al
+        const currentEarnPerTap = 1 + level * 2
+        return {
+          current: currentEarnPerTap,
+          next: level < MAX_BOOST_LEVEL ? currentEarnPerTap + 2 : null,
+          unit: "coins/tap",
+        }
+      case "energyLimit":
+        // Kullanıcının mevcut max_energy değerini al
+        const currentMaxEnergy = 100 + level * 500
+        return {
+          current: currentMaxEnergy,
+          next: level < MAX_BOOST_LEVEL ? currentMaxEnergy + 500 : null,
+          unit: "max energy",
+        }
+      case "chargeSpeed":
+        return {
+          current: level * 20,
+          next: level < MAX_BOOST_LEVEL ? (level + 1) * 20 : null,
+          unit: "% recharge rate",
+        }
+      default:
+        return { current: 0, next: null, unit: "" }
+    }
   }
 
   return (
@@ -373,7 +406,9 @@ export default function BoostOverlay({
                     ) : (
                       <>
                         <span className="text-white">{boosts.multiTouch.cost.toLocaleString()}</span>
-                        <span className="ml-2 text-green-400">+{boosts.multiTouch.level * 2} coins/tap</span>
+                        <span className="ml-2 text-green-400">
+                          +2 coins/tap
+                        </span>
                       </>
                     )}
                   </div>
@@ -428,12 +463,14 @@ export default function BoostOverlay({
                   </p>
                   <div className="flex items-center text-xs">
                     <FontAwesomeIcon icon={icons.coins} className="text-yellow-400 mr-1 text-xs" />
-                    {isMaxLevel("energyLimit") ? (
+                    {boosts.energyLimit.level >= MAX_BOOST_LEVEL ? (
                       <span className="text-green-400">Maximum Level Reached!</span>
                     ) : (
                       <>
                         <span className="text-white">{boosts.energyLimit.cost.toLocaleString()}</span>
-                        <span className="ml-2 text-green-400">+{(boosts.energyLimit.level - 1) * 500} max energy</span>
+                        <span className="ml-2 text-green-400">
+                          +500 max energy
+                        </span>
                       </>
                     )}
                   </div>
@@ -493,7 +530,9 @@ export default function BoostOverlay({
                     ) : (
                       <>
                         <span className="text-white">{boosts.chargeSpeed.cost.toLocaleString()}</span>
-                        <span className="ml-2 text-blue-400">+{boosts.chargeSpeed.level * 20}% recharge rate</span>
+                        <span className="ml-2 text-blue-400">
+                          +20% recharge rate
+                        </span>
                       </>
                     )}
                   </div>

@@ -48,9 +48,9 @@ export async function createUser(telegramId: string, username: string) {
   await supabase.from("user_boosts").insert([
     {
       user_id: data.id,
-      multi_touch_level: 1,
-      energy_limit_level: 1,
-      charge_speed_level: 1,
+      multi_touch_level: 0,
+      energy_limit_level: 0,
+      charge_speed_level: 0,
       daily_rockets: 3,
       max_daily_rockets: 3,
       energy_full_used: false,
@@ -345,49 +345,50 @@ export async function updateUserCoins(userId: string, amount: number, transactio
 export async function updateUserEnergy(userId: string, amount: number) {
   const supabase = createServerClient()
   try {
-    // First, get current energy
+    // First, get current energy and max_energy
     const { data: userData, error: userError } = await supabase
       .from("users")
       .select("energy, max_energy")
       .eq("id", userId)
       .single()
 
-    if (userError) {
+    if (userError || !userData) {
       console.error("Error fetching user energy:", userError)
       return null
     }
 
-    // Calculate new energy (never below 0 or above max)
-    const newEnergy = Math.max(0, Math.min(userData.max_energy, userData.energy + amount))
+    // Parse values as numbers to avoid NaN
+    const currentEnergy = Number(userData.energy) || 0
+    const maxEnergy = Number(userData.max_energy) || 100
 
-    const { error: updateError } = await supabase
+    // Calculate new energy (never below 0 or above max)
+    const newEnergy = Math.max(0, Math.min(maxEnergy, currentEnergy + amount))
+
+    // Update energy in database
+    const { data: updateData, error: updateError } = await supabase
       .from("users")
       .update({
         energy: newEnergy,
+        last_energy_regen: new Date().toISOString(),
       })
       .eq("id", userId)
+      .select("energy")
+      .single()
 
     if (updateError) {
-      // Check if this is a rate limit error
-      if (updateError.message && updateError.message.includes("Too Many Requests")) {
-        console.warn("Rate limit hit when updating energy. Using local value.")
-        return null // Return null to indicate rate limiting
+      // Handle rate limit
+      if (updateError.message?.includes("Too Many Requests")) {
+        console.warn("Rate limit hit when updating energy")
+        return newEnergy // Return calculated value
       }
-
       console.error("Error updating user energy:", updateError)
       return null
     }
 
-    return newEnergy
+    return updateData ? Number(updateData.energy) : newEnergy
   } catch (error) {
-    // Handle JSON parsing errors that occur with rate limiting
-    if (error instanceof SyntaxError && error.message.includes("Unexpected token")) {
-      console.warn("Rate limit hit when updating energy (JSON parse error). Using local value.")
-      return null // Return null to indicate rate limiting
-    }
-
     console.error("Error in updateUserEnergy:", error)
-    throw error
+    return null
   }
 }
 
@@ -396,94 +397,96 @@ export async function updateUserEnergy(userId: string, amount: number) {
 export async function upgradeBoost(userId: string, boostType: string) {
   try {
     const supabase = createServerClient()
-    console.log(`Upgrading ${boostType} for user ${userId}`)
 
-    // First, check if user has a boost record
-    const { data: userBoost, error: fetchError } = await supabase.from("user_boosts").select("*").eq("user_id", userId)
+    // Get user and boost data
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("coins, earn_per_tap, max_energy")
+      .eq("id", userId)
+      .single()
 
-    if (fetchError) {
-      console.error("Error fetching user boosts:", fetchError)
-      return { success: false, message: "Failed to fetch user boosts" }
+    if (userError || !userData) {
+      return { success: false, message: "User not found" }
     }
 
-    // If no boost record exists, create one
-    if (!userBoost || userBoost.length === 0) {
-      console.log("No boost record found, creating one...")
-      const { error: insertError } = await supabase.from("user_boosts").insert([
-        {
-          user_id: userId,
-          multi_touch_level: 1,
-          energy_limit_level: 1,
-          charge_speed_level: 1,
-          daily_rockets: 3,
-          max_daily_rockets: 3,
-          energy_full_used: false,
-        },
-      ])
+    const { data: boostData, error: boostError } = await supabase
+      .from("user_boosts")
+      .select("*")
+      .eq("user_id", userId)
+      .single()
 
-      if (insertError) {
-        console.error("Error creating user boosts:", insertError)
-        return { success: false, message: "Failed to create user boosts" }
+    if (boostError || !boostData) {
+      // Create boost record if it doesn't exist
+      const { error: createError } = await supabase.from("user_boosts").insert({
+        user_id: userId,
+        multi_touch_level: 0,
+        energy_limit_level: 0,
+        charge_speed_level: 0,
+        daily_rockets: 3,
+        max_daily_rockets: 3,
+        energy_full_used: false,
+      })
+
+      if (createError) {
+        return { success: false, message: "Failed to create boost record" }
       }
 
-      // Fetch the newly created boost record
-      const { data: newBoost, error: newFetchError } = await supabase
+      // Fetch the newly created record
+      const { data: newBoostData, error: fetchError } = await supabase
         .from("user_boosts")
         .select("*")
         .eq("user_id", userId)
         .single()
 
-      if (newFetchError || !newBoost) {
-        console.error("Error fetching new user boosts:", newFetchError)
-        return { success: false, message: "Failed to fetch new user boosts" }
+      if (fetchError || !newBoostData) {
+        return { success: false, message: "Failed to fetch boost data" }
       }
 
-      const userBoost = [newBoost]
+      const boostData = newBoostData
     }
 
-    // Get the first boost record (there should be only one, but just in case)
-    const boost = userBoost[0]
+    // Parse current values
+    const userCoins = Number(userData.coins) || 0
+    const currentEarnPerTap = Number(userData.earn_per_tap) || 1
+    const currentMaxEnergy = Number(userData.max_energy) || 100
 
-    // Determine which field to update based on boostType
+    // Determine boost field and current level
     let fieldToUpdate = ""
-    let currentLevel = 1
+    let currentLevel = 0
 
-    if (boostType === "multiTouch") {
-      fieldToUpdate = "multi_touch_level"
-      currentLevel = boost.multi_touch_level
-    } else if (boostType === "energyLimit") {
-      fieldToUpdate = "energy_limit_level"
-      currentLevel = boost.energy_limit_level
-    } else if (boostType === "chargeSpeed") {
-      fieldToUpdate = "charge_speed_level"
-      currentLevel = boost.charge_speed_level
-    } else {
-      return { success: false, message: "Invalid boost type" }
+    switch (boostType) {
+      case "multiTouch":
+        fieldToUpdate = "multi_touch_level"
+        currentLevel = Number(boostData.multi_touch_level) || 0
+        break
+      case "energyLimit":
+        fieldToUpdate = "energy_limit_level"
+        currentLevel = Number(boostData.energy_limit_level) || 0
+        break
+      case "chargeSpeed":
+        fieldToUpdate = "charge_speed_level"
+        currentLevel = Number(boostData.charge_speed_level) || 0
+        break
+      default:
+        return { success: false, message: "Invalid boost type" }
     }
 
-    // Check if boost is already at max level (3)
+    // Check max level (levels are 0, 1, 2, 3 - total of 4 levels)
+    // Level 3 is the maximum, so we can't upgrade from level 3
     if (currentLevel >= 3) {
       return { success: false, message: "Boost is already at maximum level" }
     }
 
-    // Calculate new level and cost
+    // Calculate cost
     const newLevel = currentLevel + 1
-    const cost = Math.floor(2000 * Math.pow(1.5, currentLevel - 1))
-
-    // Get user's current coins
-    const { data: user, error: userError } = await supabase.from("users").select("coins").eq("id", userId).single()
-
-    if (userError || !user) {
-      console.error("Error fetching user:", userError)
-      return { success: false, message: "Failed to fetch user" }
-    }
+    const cost = Math.floor(2000 * Math.pow(1.5, currentLevel))
 
     // Check if user has enough coins
-    if (user.coins < cost) {
+    if (userCoins < cost) {
       return { success: false, message: "Not enough coins" }
     }
 
-    // Begin transaction
+    // Begin transaction-like updates
     // 1. Update boost level
     const { error: updateBoostError } = await supabase
       .from("user_boosts")
@@ -491,73 +494,52 @@ export async function upgradeBoost(userId: string, boostType: string) {
       .eq("user_id", userId)
 
     if (updateBoostError) {
-      console.error("Error updating boost:", updateBoostError)
-      return { success: false, message: "Failed to update boost" }
+      return { success: false, message: "Failed to update boost level" }
     }
 
-    // 2. Deduct coins from user
-    const { error: updateCoinsError } = await supabase
-      .from("users")
-      .update({ coins: user.coins - cost })
-      .eq("id", userId)
+    // 2. Calculate new values based on boost type
+    const updates: any = { coins: userCoins - cost }
 
-    if (updateCoinsError) {
-      console.error("Error updating coins:", updateCoinsError)
+    if (boostType === "multiTouch") {
+      // Multi-touch: her seviye +2 coin/tap ekler
+      // Mevcut değere göre hesapla
+      const baseEarnPerTap = currentEarnPerTap - currentLevel * 2
+      updates.earn_per_tap = baseEarnPerTap + newLevel * 2
+    } else if (boostType === "energyLimit") {
+      // Energy limit: her seviye +500 max energy ekler
+      // Mevcut değere göre hesapla
+      const baseMaxEnergy = currentMaxEnergy - currentLevel * 500
+      updates.max_energy = baseMaxEnergy + newLevel * 500
+    }
+    // chargeSpeed doesn't need to update any user fields
+
+    // 3. Update user data
+    const { error: updateUserError } = await supabase.from("users").update(updates).eq("id", userId)
+
+    if (updateUserError) {
       // Try to rollback boost update
       await supabase
         .from("user_boosts")
         .update({ [fieldToUpdate]: currentLevel })
         .eq("user_id", userId)
-      return { success: false, message: "Failed to update coins" }
+
+      return { success: false, message: "Failed to update user data" }
     }
 
-    // 3. Record transaction - Use coin_transactions table instead of transactions
-    const { error: transactionError } = await supabase.from("coin_transactions").insert([
-      {
-        user_id: userId,
-        amount: -cost,
-        transaction_type: "boost_upgrade",
-        description: `Upgraded ${boostType} to level ${newLevel}`,
-      },
-    ])
+    // 4. Log transaction
+    await supabase.from("coin_transactions").insert({
+      user_id: userId,
+      amount: -cost,
+      transaction_type: "boost_upgrade",
+      description: `Upgraded ${boostType} to level ${newLevel}`,
+    })
 
-    if (transactionError) {
-      console.error("Error recording transaction:", {
-        error: transactionError,
-        message: transactionError.message,
-        details: transactionError.details,
-        hint: transactionError.hint,
-        code: transactionError.code,
-      })
-      // Transaction record failed, but boost upgrade succeeded
-      // We'll still return success since the core functionality worked
-    }
-
-    // 4. Update user's earn_per_tap or max_energy if needed
+    // Calculate the actual change in stats for display
+    let statChange = null
     if (boostType === "multiTouch") {
-      const { error: updateEarnError } = await supabase
-        .from("users")
-        .update({
-          earn_per_tap: 1 + (newLevel - 1) * 2,
-        })
-        .eq("id", userId)
-
-      if (updateEarnError) {
-        console.error("Error updating earn_per_tap:", updateEarnError)
-      }
-    }
-
-    if (boostType === "energyLimit") {
-      const { error: updateEnergyError } = await supabase
-        .from("users")
-        .update({
-          max_energy: 100 + (newLevel - 1) * 500,
-        })
-        .eq("id", userId)
-
-      if (updateEnergyError) {
-        console.error("Error updating max_energy:", updateEnergyError)
-      }
+      statChange = updates.earn_per_tap - currentEarnPerTap
+    } else if (boostType === "energyLimit") {
+      statChange = updates.max_energy - currentMaxEnergy
     }
 
     return {
@@ -565,9 +547,12 @@ export async function upgradeBoost(userId: string, boostType: string) {
       message: `Successfully upgraded ${boostType} to level ${newLevel}`,
       newLevel,
       cost,
+      newStats:
+        boostType === "multiTouch" ? updates.earn_per_tap : boostType === "energyLimit" ? updates.max_energy : null,
+      statChange: statChange,
     }
   } catch (error) {
-    console.error("Unexpected error in upgradeBoost:", error)
+    console.error("Error in upgradeBoost:", error)
     return { success: false, message: "An unexpected error occurred" }
   }
 }
@@ -575,91 +560,133 @@ export async function upgradeBoost(userId: string, boostType: string) {
 export async function useRocketBoost(userId: string) {
   const supabase = createServerClient()
 
-  // Get user boosts
-  const { data: boost, error: boostError } = await supabase
-    .from("user_boosts")
-    .select("daily_rockets")
-    .eq("user_id", userId)
-    .single()
+  try {
+    // Get user and boost data
+    const { data: boostData, error: boostError } = await supabase
+      .from("user_boosts")
+      .select("daily_rockets")
+      .eq("user_id", userId)
+      .single()
 
-  if (boostError) {
-    console.error("Error fetching user boosts:", boostError)
-    return { success: false, message: "Boosts not found" }
+    if (boostError || !boostData) {
+      return { success: false, message: "Boost data not found" }
+    }
+
+    const dailyRockets = Number(boostData.daily_rockets) || 0
+
+    if (dailyRockets <= 0) {
+      return { success: false, message: "No rockets left" }
+    }
+
+    // Get current energy and max_energy
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("energy, max_energy")
+      .eq("id", userId)
+      .single()
+
+    if (userError || !userData) {
+      return { success: false, message: "User data not found" }
+    }
+
+    const currentEnergy = Number(userData.energy) || 0
+    const maxEnergy = Number(userData.max_energy) || 100
+
+    // Calculate new energy (never above max)
+    const newEnergy = Math.min(maxEnergy, currentEnergy + 500)
+
+    // Update rockets count
+    const { error: updateBoostError } = await supabase
+      .from("user_boosts")
+      .update({ daily_rockets: dailyRockets - 1 })
+      .eq("user_id", userId)
+
+    if (updateBoostError) {
+      return { success: false, message: "Failed to use rocket" }
+    }
+
+    // Update energy directly
+    const { error: updateEnergyError } = await supabase
+      .from("users")
+      .update({
+        energy: newEnergy,
+        last_energy_regen: new Date().toISOString(),
+      })
+      .eq("id", userId)
+
+    if (updateEnergyError) {
+      // Try to rollback rocket update
+      await supabase.from("user_boosts").update({ daily_rockets: dailyRockets }).eq("user_id", userId)
+
+      return { success: false, message: "Failed to update energy" }
+    }
+
+    return {
+      success: true,
+      rocketsLeft: dailyRockets - 1,
+      newEnergy,
+    }
+  } catch (error) {
+    console.error("Error in useRocketBoost:", error)
+    return { success: false, message: "Failed to use rocket boost" }
   }
-
-  // Check if user has rockets left
-  if (boost.daily_rockets <= 0) {
-    return { success: false, message: "No rockets left" }
-  }
-
-  // Update rockets count
-  const { error: updateError } = await supabase
-    .from("user_boosts")
-    .update({
-      daily_rockets: boost.daily_rockets - 1,
-    })
-    .eq("user_id", userId)
-
-  if (updateError) {
-    console.error("Error using rocket:", updateError)
-    return { success: false, message: "Error using rocket" }
-  }
-
-  // Add energy to user
-  await updateUserEnergy(userId, 500)
-
-  return { success: true, rocketsLeft: boost.daily_rockets - 1 }
 }
 
 export async function useFullEnergyBoost(userId: string) {
   const supabase = createServerClient()
 
-  // Get user boosts
-  const { data: boost, error: boostError } = await supabase
-    .from("user_boosts")
-    .select("energy_full_used")
-    .eq("user_id", userId)
-    .single()
+  try {
+    // Get boost data
+    const { data: boostData, error: boostError } = await supabase
+      .from("user_boosts")
+      .select("energy_full_used")
+      .eq("user_id", userId)
+      .single()
 
-  if (boostError) {
-    console.error("Error fetching user boosts:", boostError)
-    return { success: false, message: "Boosts not found" }
+    if (boostError || !boostData) {
+      return { success: false, message: "Boost data not found" }
+    }
+
+    if (boostData.energy_full_used) {
+      return { success: false, message: "Full energy already used today" }
+    }
+
+    // Get user's current and max energy
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("energy, max_energy")
+      .eq("id", userId)
+      .single()
+
+    if (userError || !userData) {
+      return { success: false, message: "User not found" }
+    }
+
+    const currentEnergy = Number(userData.energy) || 0
+    const maxEnergy = Number(userData.max_energy) || 100
+    const energyToAdd = maxEnergy - currentEnergy
+
+    // Update boost usage
+    const { error: updateBoostError } = await supabase
+      .from("user_boosts")
+      .update({ energy_full_used: true })
+      .eq("user_id", userId)
+
+    if (updateBoostError) {
+      return { success: false, message: "Failed to update boost usage" }
+    }
+
+    // Fill energy to max
+    const newEnergy = await updateUserEnergy(userId, energyToAdd)
+
+    return {
+      success: true,
+      newEnergy: newEnergy || maxEnergy,
+    }
+  } catch (error) {
+    console.error("Error in useFullEnergyBoost:", error)
+    return { success: false, message: "Failed to use full energy boost" }
   }
-
-  // Check if user has already used full energy today
-  if (boost.energy_full_used) {
-    return { success: false, message: "Full energy already used today" }
-  }
-
-  // Update energy_full_used
-  const { error: updateError } = await supabase
-    .from("user_boosts")
-    .update({
-      energy_full_used: true,
-    })
-    .eq("user_id", userId)
-
-  if (updateError) {
-    console.error("Error using full energy:", updateError)
-    return { success: false, message: "Error using full energy" }
-  }
-
-  // Get user's max energy
-  const { data: user, error: userError } = await supabase
-    .from("users")
-    .select("energy, max_energy")
-    .eq("id", userId)
-    .single()
-
-  if (userError) {
-    console.error("Error fetching user:", userError)
-    return { success: false, message: "User not found" }
-  }
-
-  // Fill user's energy to max
-  await updateUserEnergy(userId, user.max_energy - user.energy)
-
-  return { success: true }
 }
 
 // Kullanıcının saatlik kazancını dinamik olarak hesapla (item ve boost'lar dahil)

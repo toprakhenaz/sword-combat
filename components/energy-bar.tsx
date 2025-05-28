@@ -13,8 +13,8 @@ export default function EnergyBar({ energy, maxEnergy, boost, onOpenBoostOverlay
   const { getLeagueColors } = useLeagues()
   const leagueColors = getLeagueColors(league)
 
-  // Calculate energy percentage
-  const energyPercentage = (energy / maxEnergy) * 100
+  // Calculate energy percentage, handle NaN values
+  const energyPercentage = isNaN(energy) || isNaN(maxEnergy) || maxEnergy === 0 ? 0 : (energy / maxEnergy) * 100
 
   // Track energy changes for animations
   useEffect(() => {
@@ -43,9 +43,9 @@ export default function EnergyBar({ energy, maxEnergy, boost, onOpenBoostOverlay
       <span
         className={energy < maxEnergy * 0.2 ? "text-red-400" : energy === maxEnergy ? "text-green-400" : "text-white"}
       >
-        {formatNumber(energy, 0)}
+        {isNaN(energy) ? "0" : formatNumber(energy, 0)}
       </span>
-      <span className="text-gray-300"> / {formatNumber(maxEnergy, 0)}</span>
+      <span className="text-gray-300"> / {isNaN(maxEnergy) ? "100" : formatNumber(maxEnergy, 0)}</span>
     </span>
   )
 
@@ -58,7 +58,8 @@ export default function EnergyBar({ energy, maxEnergy, boost, onOpenBoostOverlay
           <span className="text-white font-semibold text-base">Energy</span>
         </div>
         <span className="font-bold text-base" style={{ color: energy === maxEnergy ? "#22c55e" : "#fff" }}>
-          {formatNumber(energy)} <span className="text-gray-400 font-bold">/ {formatNumber(maxEnergy)}</span>
+          {isNaN(energy) ? "0" : formatNumber(energy)}{" "}
+          <span className="text-gray-400 font-bold">/ {isNaN(maxEnergy) ? "100" : formatNumber(maxEnergy)}</span>
         </span>
       </div>
       {/* Bar + Rocket */}

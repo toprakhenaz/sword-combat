@@ -71,7 +71,7 @@ type UserContextType = {
   setLeague: (league: number) => void
   handleTap: () => Promise<void>
   collectHourlyEarnings: () => Promise<{ success: boolean; coins?: number; message?: string }>
-  upgradeBoost: (boostType: string) => Promise<{ success: boolean; message?: string }>
+  upgradeBoost: (boostType: string) => Promise<{ success: boolean; message?: string; statChange?: number }>
   useRocketBoost: () => Promise<{ success: boolean; message?: string }>
   useFullEnergyBoost: () => Promise<{ success: boolean; message?: string }>
   findComboCard: (cardIndex: number) => Promise<{
@@ -108,9 +108,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
     isCompleted: false,
   })
   const [boosts, setBoosts] = useState({
-    multiTouch: { level: 1, cost: 2000 },
-    energyLimit: { level: 1, cost: 2000 },
-    chargeSpeed: { level: 1, cost: 2000 },
+    multiTouch: { level: 0, cost: 2000 },
+    energyLimit: { level: 0, cost: 2000 },
+    chargeSpeed: { level: 0, cost: 2000 },
     dailyRockets: 3,
     maxDailyRockets: 3,
     energyFullUsed: false,
@@ -361,16 +361,16 @@ export function UserProvider({ children }: { children: ReactNode }) {
             const boost = userBoosts[0] // Use the first record if multiple exist
             setBoosts({
               multiTouch: {
-                level: boost.multi_touch_level,
-                cost: 2000 * Math.pow(1.5, boost.multi_touch_level - 1),
+                level: boost.multi_touch_level || 0,
+                cost: 2000 * Math.pow(1.5, boost.multi_touch_level || 0),
               },
               energyLimit: {
-                level: boost.energy_limit_level,
-                cost: 2000 * Math.pow(1.5, boost.energy_limit_level - 1),
+                level: boost.energy_limit_level || 0,
+                cost: 2000 * Math.pow(1.5, boost.energy_limit_level || 0),
               },
               chargeSpeed: {
-                level: boost.charge_speed_level,
-                cost: 2000 * Math.pow(1.5, boost.charge_speed_level - 1),
+                level: boost.charge_speed_level || 0,
+                cost: 2000 * Math.pow(1.5, boost.charge_speed_level || 0),
               },
               dailyRockets: boost.daily_rockets,
               maxDailyRockets: boost.max_daily_rockets,
@@ -382,9 +382,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
             await supabase.from("user_boosts").insert([
               {
                 user_id: existingUser.id,
-                multi_touch_level: 1,
-                energy_limit_level: 1,
-                charge_speed_level: 1,
+                multi_touch_level: 0,
+                energy_limit_level: 0,
+                charge_speed_level: 0,
                 daily_rockets: 3,
                 max_daily_rockets: 3,
                 energy_full_used: false,
@@ -439,9 +439,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
             await supabase.from("user_boosts").insert([
               {
                 user_id: newUser.id,
-                multi_touch_level: 1,
-                energy_limit_level: 1,
-                charge_speed_level: 1,
+                multi_touch_level: 0,
+                energy_limit_level: 0,
+                charge_speed_level: 0,
                 daily_rockets: 3,
                 max_daily_rockets: 3,
                 energy_full_used: false,
@@ -477,36 +477,29 @@ export function UserProvider({ children }: { children: ReactNode }) {
     const now = Date.now()
     const timeSinceLastTap = now - lastTapTime.current
 
-    if (timeSinceLastTap < 50) return // Rate limit: 20 taps per second max
+    if (timeSinceLastTap < tapCooldown) return
 
     lastTapTime.current = now
 
-    // Immediate UI update
-    const newEnergy = Math.max(0, energy - 1)
-    setEnergy(newEnergy)
+    // Ensure earnPerTap is a number
+    const tapEarnAmount = isNaN(earnPerTap) ? 1 : earnPerTap
 
-    const newCombo = comboCounter + 1
-    setComboCounter(newCombo)
+    // Update local state immediately
+    setEnergy((prev) => Math.max(0, prev - 1))
+    setCoins((prev) => prev + tapEarnAmount)
 
-    let multiplier = 1
-    if (newCombo > 50) multiplier = 3
-    else if (newCombo > 25) multiplier = 2
-    else if (newCombo > 10) multiplier = 1.5
-
-    const coinsToEarn = Math.round(earnPerTap * multiplier)
-    const newCoins = coins + coinsToEarn
-    setCoins(newCoins)
-
-    // Queue updates for batch processing
+    // Queue updates
     coinUpdateQueue.current.push({
-      amount: coinsToEarn,
+      amount: tapEarnAmount,
       transactionType: "tap",
-      description: `Tap with ${multiplier}x combo`,
+      description: `Tap for ${tapEarnAmount} coins`,
     })
 
-    // Check for league update immediately
-    checkAndUpdateLeague(newCoins)
-  }, [energy, earnPerTap, comboCounter, coins, checkAndUpdateLeague])
+    energyUpdateQueue.current -= 1
+
+    // Check for league update
+    checkAndUpdateLeague(coins + tapEarnAmount)
+  }, [energy, earnPerTap, coins, checkAndUpdateLeague, tapCooldown])
 
   // Update energy handler
   const updateEnergyHandler = useCallback(
@@ -676,7 +669,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!userId || energy >= maxEnergy) return
 
-    const regenRate = 1 + (boosts.chargeSpeed.level - 1) * 0.2 // 20% faster per level
+    const regenRate = 1 + boosts.chargeSpeed.level * 0.2 // 20% faster per level
     const regenInterval = 1000 / regenRate // milliseconds per energy point
 
     const interval = setInterval(() => {
@@ -740,22 +733,20 @@ export function UserProvider({ children }: { children: ReactNode }) {
       if (!userId) return { success: false, message: "User not found" }
 
       try {
-        // Get current boost level and cost
-        const currentBoost = boosts[
-          boostType as keyof Omit<typeof boosts, "dailyRockets" | "maxDailyRockets" | "energyFullUsed">
-        ] as { level: number; cost: number }
+        const currentBoost = boosts[boostType as keyof typeof boosts] as { level: number; cost: number }
 
-        // Check if boost is already at max level
-        if (currentBoost.level >= 3) {
+        if (!currentBoost) {
+          return { success: false, message: "Invalid boost type" }
+        }
+
+        if (currentBoost.level >= 2) {
           return { success: false, message: "Boost is already at maximum level!" }
         }
 
-        // Check if user has enough coins
         if (coins < currentBoost.cost) {
           return { success: false, message: "Not enough coins" }
         }
 
-        // Call the upgraded upgradeBoost function
         const result = await upgradeBoost(userId, boostType)
 
         if (!result.success) {
@@ -763,80 +754,74 @@ export function UserProvider({ children }: { children: ReactNode }) {
         }
 
         // Update local state on success
-        setCoins((prevCoins) => prevCoins - currentBoost.cost)
+        setCoins((prevCoins) => Math.max(0, prevCoins - currentBoost.cost))
 
-        setBoosts((prevBoosts) => {
-          const updatedBoosts = { ...prevBoosts }
-          const boostToUpdate = updatedBoosts[
-            boostType as keyof Omit<typeof updatedBoosts, "dailyRockets" | "maxDailyRockets" | "energyFullUsed">
-          ] as { level: number; cost: number }
+        // Update boost levels
+        const newLevel = currentBoost.level + 1
+        const newCost = Math.floor(2000 * Math.pow(1.5, newLevel))
 
-          if (boostToUpdate) {
-            boostToUpdate.level += 1
-            boostToUpdate.cost = Math.floor(2000 * Math.pow(1.5, boostToUpdate.level - 1))
-          }
+        setBoosts((prevBoosts) => ({
+          ...prevBoosts,
+          [boostType]: { level: newLevel, cost: newCost },
+        }))
 
-          return updatedBoosts
-        })
-
-        // Update specific stats based on boost type
-        if (boostType === "multiTouch") {
-          setEarnPerTap(1 + boosts.multiTouch.level * 2)
-        } else if (boostType === "energyLimit") {
-          setMaxEnergy(100 + boosts.energyLimit.level * 500)
+        // Update related stats based on the server response
+        if (boostType === "multiTouch" && result.newStats) {
+          setEarnPerTap(result.newStats)
+        } else if (boostType === "energyLimit" && result.newStats) {
+          setMaxEnergy(result.newStats)
         }
 
-        // Refresh user data in the background to ensure consistency
-        setTimeout(() => refreshUserData(), 1000)
-
-        return { success: true, message: result.message || "Boost upgraded successfully" }
+        return {
+          success: true,
+          message: "Boost upgraded successfully",
+          statChange: result.statChange,
+        }
       } catch (error) {
         console.error("Error upgrading boost:", error)
         return { success: false, message: "Failed to upgrade boost" }
       }
     },
-    [userId, boosts, coins, refreshUserData],
+    [userId, boosts, coins],
   )
 
   // Use rocket boost handler
   const useRocketBoostHandler = useCallback(async () => {
     if (!userId) return { success: false, message: "User not found" }
 
-    // Optimistically update UI immediately
-    const { dailyRockets, maxEnergy } = boosts
-
-    if (dailyRockets <= 0) {
+    // Check if user has rockets left
+    if (boosts.dailyRockets <= 0) {
       return { success: false, message: "No rockets left" }
     }
 
-    const rocketsLeft = dailyRockets - 1
+    try {
+      // Call the server function
+      const result = await useRocketBoost(userId)
 
-    // Update UI immediately
-    setBoosts((prevBoosts) => ({
-      ...prevBoosts,
-      dailyRockets: rocketsLeft,
-    }))
+      if (!result.success) {
+        return { success: false, message: result.message || "Failed to use rocket boost" }
+      }
 
-    setEnergy((prevEnergy) => Math.min(maxEnergy, prevEnergy + 500))
-
-    let useRocketBoostInnerResult = { success: false, message: "User ID not found" }
-
-    if (userId) {
-      useRocketBoostInnerResult = await useRocketBoostInner(userId)
-    }
-
-    if (!useRocketBoostInnerResult.success) {
-      // Rollback optimistic updates if the server call fails
+      // Update local state with server values
       setBoosts((prevBoosts) => ({
         ...prevBoosts,
-        dailyRockets: dailyRockets,
+        dailyRockets: result.rocketsLeft,
       }))
-      setEnergy((prevEnergy) => Math.max(0, prevEnergy - 500))
-      return { success: false, message: useRocketBoostInnerResult.message || "Failed to use rocket boost" }
-    }
 
-    return { success: true, rocketsLeft: rocketsLeft }
-  }, [boosts, maxEnergy, useRocketBoostInner, userId])
+      // Use the energy value returned from the server
+      if (result.newEnergy !== undefined) {
+        setEnergy(result.newEnergy)
+      } else {
+        // Fallback to local calculation if server doesn't return energy
+        setEnergy((prev) => Math.min(maxEnergy, prev + 500))
+      }
+
+      return { success: true, rocketsLeft: result.rocketsLeft }
+    } catch (error) {
+      console.error("Error using rocket boost:", error)
+      return { success: false, message: "Failed to use rocket boost" }
+    }
+  }, [userId, boosts.dailyRockets, maxEnergy])
 
   // Use full energy boost handler
   const useFullEnergyBoostHandler = useCallback(async () => {
@@ -847,6 +832,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
       return { success: false, message: "Full energy already used today" }
     }
 
+    const useFullEnergyBoostInnerResult = await useFullEnergyBoostInner(userId)
+
     // Update UI immediately
     setBoosts((prevBoosts) => ({
       ...prevBoosts,
@@ -856,10 +843,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
     const energyToAdd = maxEnergy - energy
     setEnergy(maxEnergy)
 
-    // Make the actual API call in the background
-    const result = await useFullEnergyBoostInner(userId)
-
-    if (!result.success) {
+    if (!useFullEnergyBoostInnerResult.success) {
       // Rollback optimistic updates if the server call fails
       setBoosts((prevBoosts) => ({
         ...prevBoosts,
@@ -868,7 +852,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
       setEnergy((prevEnergy) => Math.max(0, prevEnergy - energyToAdd))
 
-      return { success: false, message: result.message || "Failed to use full energy boost" }
+      return { success: false, message: useFullEnergyBoostInnerResult.message || "Failed to use full energy boost" }
     }
 
     return { success: true }
