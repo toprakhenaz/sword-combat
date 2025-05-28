@@ -445,7 +445,7 @@ export async function upgradeBoost(userId: string, boostType: string) {
       const boostData = newBoostData
     }
 
-    // Parse current values - TEXT'ten INT'e çevirirken dikkatli ol
+    // Parse current values
     const userCoins = Number(userData.coins) || 0
     const currentEarnPerTap = Number(userData.earn_per_tap) || 1
     const currentMaxEnergy = Number(userData.max_energy) || 100
@@ -471,15 +471,15 @@ export async function upgradeBoost(userId: string, boostType: string) {
         return { success: false, message: "Invalid boost type" }
     }
 
-    // Check max level - DİKKAT: Seviyeler 0'dan başlıyor
-    // 0, 1, 2, 3 = toplam 4 seviye, maksimum seviye 3
+    // Check max level (levels are 0, 1, 2, 3 - total of 4 levels)
+    // Level 3 is the maximum, so we can't upgrade from level 3
     if (currentLevel >= 3) {
-      return { success: false, message: "Boost is already at maximum level!" }
+      return { success: false, message: "Boost is already at maximum level" }
     }
 
-    // Calculate cost for CURRENT level (not new level)
-    const cost = Math.floor(2000 * Math.pow(1.5, currentLevel))
+    // Calculate cost
     const newLevel = currentLevel + 1
+    const cost = Math.floor(2000 * Math.pow(1.5, currentLevel))
 
     // Check if user has enough coins
     if (userCoins < cost) {
@@ -502,10 +502,14 @@ export async function upgradeBoost(userId: string, boostType: string) {
 
     if (boostType === "multiTouch") {
       // Multi-touch: her seviye +2 coin/tap ekler
-      updates.earn_per_tap = 1 + newLevel * 2 // Base 1 + level * 2
+      // Mevcut değere göre hesapla
+      const baseEarnPerTap = currentEarnPerTap - currentLevel * 2
+      updates.earn_per_tap = baseEarnPerTap + newLevel * 2
     } else if (boostType === "energyLimit") {
       // Energy limit: her seviye +500 max energy ekler
-      updates.max_energy = 100 + newLevel * 500 // Base 100 + level * 500
+      // Mevcut değere göre hesapla
+      const baseMaxEnergy = currentMaxEnergy - currentLevel * 500
+      updates.max_energy = baseMaxEnergy + newLevel * 500
     }
     // chargeSpeed doesn't need to update any user fields
 
@@ -532,14 +536,10 @@ export async function upgradeBoost(userId: string, boostType: string) {
 
     // Calculate the actual change in stats for display
     let statChange = null
-    let newStats = null
-
     if (boostType === "multiTouch") {
-      newStats = updates.earn_per_tap
-      statChange = 2 // Her seviye +2 veriyor
+      statChange = updates.earn_per_tap - currentEarnPerTap
     } else if (boostType === "energyLimit") {
-      newStats = updates.max_energy
-      statChange = 500 // Her seviye +500 veriyor
+      statChange = updates.max_energy - currentMaxEnergy
     }
 
     return {
@@ -547,8 +547,9 @@ export async function upgradeBoost(userId: string, boostType: string) {
       message: `Successfully upgraded ${boostType} to level ${newLevel}`,
       newLevel,
       cost,
-      newStats,
-      statChange,
+      newStats:
+        boostType === "multiTouch" ? updates.earn_per_tap : boostType === "energyLimit" ? updates.max_energy : null,
+      statChange: statChange,
     }
   } catch (error) {
     console.error("Error in upgradeBoost:", error)

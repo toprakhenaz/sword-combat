@@ -257,7 +257,7 @@ export default function BoostOverlay({
   const getBoostStats = (boostType: string, level: number) => {
     switch (boostType) {
       case "multiTouch":
-        // Base 1 + level * 2 formülü
+        // Kullanıcının mevcut earn_per_tap değerini al
         const currentEarnPerTap = 1 + level * 2
         return {
           current: currentEarnPerTap,
@@ -265,7 +265,7 @@ export default function BoostOverlay({
           unit: "coins/tap",
         }
       case "energyLimit":
-        // Base 100 + level * 500 formülü
+        // Kullanıcının mevcut max_energy değerini al
         const currentMaxEnergy = 100 + level * 500
         return {
           current: currentMaxEnergy,
@@ -406,7 +406,9 @@ export default function BoostOverlay({
                     ) : (
                       <>
                         <span className="text-white">{boosts.multiTouch.cost.toLocaleString()}</span>
-                        <span className="ml-2 text-green-400">+2 coins/tap</span>
+                        <span className="ml-2 text-green-400">
+                          +2 coins/tap
+                        </span>
                       </>
                     )}
                   </div>
@@ -466,7 +468,9 @@ export default function BoostOverlay({
                     ) : (
                       <>
                         <span className="text-white">{boosts.energyLimit.cost.toLocaleString()}</span>
-                        <span className="ml-2 text-green-400">+500 max energy</span>
+                        <span className="ml-2 text-green-400">
+                          +500 max energy
+                        </span>
                       </>
                     )}
                   </div>
@@ -526,7 +530,9 @@ export default function BoostOverlay({
                     ) : (
                       <>
                         <span className="text-white">{boosts.chargeSpeed.cost.toLocaleString()}</span>
-                        <span className="ml-2 text-blue-400">+20% recharge rate</span>
+                        <span className="ml-2 text-blue-400">
+                          +20% recharge rate
+                        </span>
                       </>
                     )}
                   </div>

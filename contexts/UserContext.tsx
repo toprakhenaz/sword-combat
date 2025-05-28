@@ -359,28 +359,22 @@ export function UserProvider({ children }: { children: ReactNode }) {
           // Check if we got any boost records
           if (userBoosts && userBoosts.length > 0) {
             const boost = userBoosts[0] // Use the first record if multiple exist
-
-            // Number() ile parse et çünkü veritabanından text olarak gelebilir
-            const multiTouchLevel = Number(boost.multi_touch_level) || 0
-            const energyLimitLevel = Number(boost.energy_limit_level) || 0
-            const chargeSpeedLevel = Number(boost.charge_speed_level) || 0
-
             setBoosts({
               multiTouch: {
-                level: multiTouchLevel,
-                cost: Math.floor(2000 * Math.pow(1.5, multiTouchLevel)),
+                level: boost.multi_touch_level || 0,
+                cost: 2000 * Math.pow(1.5, boost.multi_touch_level || 0),
               },
               energyLimit: {
-                level: energyLimitLevel,
-                cost: Math.floor(2000 * Math.pow(1.5, energyLimitLevel)),
+                level: boost.energy_limit_level || 0,
+                cost: 2000 * Math.pow(1.5, boost.energy_limit_level || 0),
               },
               chargeSpeed: {
-                level: chargeSpeedLevel,
-                cost: Math.floor(2000 * Math.pow(1.5, chargeSpeedLevel)),
+                level: boost.charge_speed_level || 0,
+                cost: 2000 * Math.pow(1.5, boost.charge_speed_level || 0),
               },
-              dailyRockets: Number(boost.daily_rockets) || 3,
-              maxDailyRockets: Number(boost.max_daily_rockets) || 3,
-              energyFullUsed: Boolean(boost.energy_full_used) || false,
+              dailyRockets: boost.daily_rockets,
+              max_daily_rockets: boost.max_daily_rockets,
+              energyFullUsed: boost.energy_full_used,
             })
           } else {
             // Create default boosts if none exist
@@ -625,7 +619,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
     const interval = setInterval(() => {
       accumulatedCoins += coinsPerSecond
       setCoins((prev) => {
-        const newCoins = prev + coinsPerSecond
+        // Round to 2 decimal places to avoid floating point precision issues
+        const newCoins = Math.round((prev + coinsPerSecond) * 100) / 100
         // Check for league update
         checkAndUpdateLeague(newCoins)
         return newCoins
@@ -745,8 +740,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
           return { success: false, message: "Invalid boost type" }
         }
 
-        // Maksimum seviye kontrolü
-        if (currentBoost.level >= 3) {
+        if (currentBoost.level >= 2) {
           return { success: false, message: "Boost is already at maximum level!" }
         }
 
@@ -777,8 +771,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
           setEarnPerTap(result.newStats)
         } else if (boostType === "energyLimit" && result.newStats) {
           setMaxEnergy(result.newStats)
-          // Energy'yi de yeni max'a göre ayarla
-          setEnergy((prev) => Math.min(prev, result.newStats))
         }
 
         return {

@@ -6,14 +6,18 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatNumber(num: number): string {
-  if (num >= 1000000000) {
-    return (num / 1000000000).toFixed(1) + "B"
-  } else if (num >= 1000000) {
-    return (num / 1000000).toFixed(1) + "M"
-  } else if (num >= 1000) {
-    return (num / 1000).toFixed(1) + "K"
+  // Round to 2 decimal places to avoid floating point precision issues
+  const roundedNum = Math.round(num * 100) / 100
+
+  if (roundedNum >= 1000000000) {
+    return (roundedNum / 1000000000).toFixed(1) + "B"
+  } else if (roundedNum >= 1000000) {
+    return (roundedNum / 1000000).toFixed(1) + "M"
+  } else if (roundedNum >= 1000) {
+    return (roundedNum / 1000).toFixed(1) + "K"
   } else {
-    return num.toString()
+    // For numbers less than 1000, show at most 1 decimal place
+    return Number(roundedNum.toFixed(1)).toString()
   }
 }
 
